@@ -95,4 +95,5 @@ CRON_CLASSES = [
     "django_cron.cron.FailedRunsNotificationCronJob",
 ]
 
-USE_TZ = False
+USE_TZ = True
+TIME_ZONE = "UTC"

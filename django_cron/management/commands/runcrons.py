@@ -9,8 +9,6 @@ from django_cron.core import CronJobManager
 from django_cron.helpers import get_class, get_current_time
 from django_cron.models import CronJobLog
 
-DEFAULT_LOCK_TIME = 24 * 60 * 60  # 24 hours
-
 
 class Command(BaseCommand):
     def add_arguments(self, parser):
@@ -23,6 +21,11 @@ class Command(BaseCommand):
             "--dry-run",
             action="store_true",
             help="Just show what crons would be run; don't actually run them",
+        )
+        parser.add_argument(
+            "--hide-skipped",
+            action="store_true",
+            help="Do not print a line for jobs that are not due to run yet",
         )
 
     def handle(self, *args, **options):
@@ -57,6 +60,7 @@ class Command(BaseCommand):
                 silent=options["silent"],
                 dry_run=options["dry_run"],
                 stdout=self.stdout,
+                show_skipped=not options["hide_skipped"],
             )
 
         clear_old_log_entries()
@@ -69,6 +73,7 @@ def run_cron_with_cache_check(
     silent: bool = False,
     dry_run: bool = False,
     stdout=None,
+    show_skipped: bool = True,
 ):
     """
     Checks the cache and runs the cron or not.
@@ -80,7 +85,11 @@ def run_cron_with_cache_check(
     @stdout     - where to write feedback to
     """
     with CronJobManager(
-        cron_class, silent=silent, dry_run=dry_run, stdout=stdout
+        cron_class,
+        silent=silent,
+        dry_run=dry_run,
+        stdout=stdout,
+        show_skipped=show_skipped,
     ) as manager:
         manager.run(force)
 

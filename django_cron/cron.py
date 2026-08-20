@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMessage
 
 from .core import CronJobBase, Schedule
 from .helpers import get_class
@@ -43,13 +43,14 @@ class FailedRunsNotificationCronJob(CronJobBase):
                     )
 
             if failures >= min_failures:
-                send_mail(
+                # EmailMessage().send() instead of send_mail(): the latter is
+                # deprecated in Django 6.1 and removed in 7.0.
+                EmailMessage(
                     '%s%s failed %s times in a row!' % (
                         failed_runs_cronjob_email_prefix,
                         cron.code,
                         min_failures,
                     ),
                     message,
-                    None,
-                    emails,
-                )
+                    to=emails,
+                ).send()

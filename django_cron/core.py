@@ -3,7 +3,7 @@ import sys
 import time
 import traceback
 from collections.abc import Container, Sequence
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, ClassVar
 
 from django.conf import settings
@@ -113,10 +113,15 @@ class CronJobManager:
         silent: bool = False,
         dry_run: bool = False,
         stdout=None,
+        show_skipped: bool = True,
     ):
         self.cron_job_class = cron_job_class
         self.silent = silent
         self.dry_run = dry_run
+        # A job that is not due writes one "[ ] code" line per attempt. Projects
+        # calling runcrons every minute get that line for every job, every minute
+        # (22 jobs = ~32k lines a day), which buries the lines that matter.
+        self.show_skipped = show_skipped
         self.stdout = stdout or sys.stdout
         self.lock_class = self.get_lock_class()
         self.previously_ran_successful_cron = None
@@ -138,12 +143,19 @@ class CronJobManager:
         if force:
             return True
 
+        # get_current_time() is timezone-aware and follows settings.TIME_ZONE.
+        # datetime.today() was naive and in the *server* timezone: with USE_TZ=True
+        # every database comparison raised a RuntimeWarning, and weekly/monthly
+        # jobs used the wrong day whenever the server timezone differed from
+        # TIME_ZONE (a job "on the 1st" could run on the 2nd, or not at all).
+        now = get_current_time()
+
         if cron_job.schedule.run_monthly_on_days is not None:
-            if datetime.today().day not in cron_job.schedule.run_monthly_on_days:
+            if now.day not in cron_job.schedule.run_monthly_on_days:
                 return False
 
         if cron_job.schedule.run_weekly_on_days is not None:
-            if datetime.today().weekday() not in cron_job.schedule.run_weekly_on_days:
+            if now.weekday() not in cron_job.schedule.run_weekly_on_days:
                 return False
 
         if cron_job.schedule.retry_after_failure_mins:
@@ -151,7 +163,7 @@ class CronJobManager:
             last_job = (
                 CronJobLog.objects.filter(code=cron_job.code)
                 .order_by("-start_time")
-                .exclude(start_time__gt=datetime.today())
+                .exclude(start_time__gt=now)
                 .first()
             )
             if (
@@ -168,7 +180,7 @@ class CronJobManager:
             try:
                 self.previously_ran_successful_cron = (
                     CronJobLog.objects.filter(code=cron_job.code, is_success=True)
-                    .exclude(start_time__gt=datetime.today())
+                    .exclude(start_time__gt=now)
                     .latest("start_time")
                 )
             except CronJobLog.DoesNotExist:
@@ -187,7 +199,6 @@ class CronJobManager:
         if cron_job.schedule.run_at_times:
             for time_data in cron_job.schedule.run_at_times:
                 user_time = time.strptime(time_data, "%H:%M")
-                now = get_current_time()
                 actual_time = time.strptime("%s:%s" % (now.hour, now.minute), "%H:%M")
                 if actual_time >= user_time:
                     qset = CronJobLog.objects.filter(
@@ -306,7 +317,7 @@ class CronJobManager:
                         "[\N{HEAVY CHECK MARK}] {0}\n".format(self.cron_job.code)
                     )
                 self._remove_old_success_job_logs(cron_job_class)
-            elif not self.silent:
+            elif not self.silent and self.show_skipped:
                 self.stdout.write("[ ] {0}\n".format(self.cron_job.code))
 
     def get_lock_class(self):
